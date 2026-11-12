@@ -1,0 +1,1319 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Coffre-Fort Malware — Stockage & Détection</title>
+<style>
+  :root{
+    --bg:#0b0f14; --bg2:#111722; --panel:#161d2a; --panel2:#1c2535;
+    --border:#2a3447; --text:#e6edf3; --muted:#8b98a9; --accent:#3b82f6;
+    --danger:#ef4444; --warn:#f59e0b; --ok:#22c55e; --purple:#a855f7; --cyan:#06b6d4;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;height:100%}
+  body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);font-size:14px;overflow:hidden}
+  header{display:flex;align-items:center;gap:14px;padding:12px 18px;background:linear-gradient(180deg,#131a26,#0b0f14);border-bottom:1px solid var(--border)}
+  header .logo{width:34px;height:34px;border-radius:8px;background:linear-gradient(135deg,#ef4444,#7f1d1d);display:grid;place-items:center;font-size:18px;box-shadow:0 0 18px #ef444455}
+  header h1{margin:0;font-size:18px;font-weight:700}
+  header .sub{color:var(--muted);font-size:12px}
+  header .spacer{flex:1}
+  .badge{padding:4px 10px;border-radius:999px;font-size:11px;font-weight:600;border:1px solid var(--border);background:var(--panel)}
+  .badge.locked{color:var(--warn);border-color:#f59e0b55;background:#f59e0b15}
+  .badge.unlocked{color:var(--ok);border-color:#22c55e55;background:#22c55e15}
+  .badge.off{color:var(--muted)}
+  .badge.score{font-weight:700}
+  button{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 12px;cursor:pointer;font-size:13px;transition:.15s}
+  button:hover{background:#24304a;border-color:#3a4a66}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.primary:hover{background:#2563eb}
+  button.danger{background:#7f1d1d;border-color:#991b1b;color:#fff}
+  button.danger:hover{background:#991b1b}
+  button.ghost{background:transparent}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .layout{display:grid;grid-template-columns:340px 1fr;height:calc(100vh - 62px)}
+  .sidebar{background:var(--bg2);border-right:1px solid var(--border);padding:16px;display:flex;flex-direction:column;gap:14px;overflow:auto}
+  .main{display:flex;flex-direction:column;overflow:hidden}
+  .maintabs{display:flex;gap:6px;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--bg2)}
+  .maintab{padding:8px 14px;font-size:13px;font-weight:600}
+  .maintab.active{background:var(--accent);border-color:var(--accent);color:#fff}
+  .view{display:none;flex-direction:column;flex:1;overflow:hidden}
+  .view.active{display:flex}
+  .toolbar{display:flex;gap:8px;padding:12px 16px;border-bottom:1px solid var(--border);align-items:center;flex-wrap:wrap}
+  .toolbar input[type=search]{flex:1;min-width:180px;background:var(--panel);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px}
+  .toolbar select{background:var(--panel);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px}
+  .dropzone{border:2px dashed var(--border);border-radius:12px;padding:20px 12px;text-align:center;color:var(--muted);transition:.2s;cursor:pointer}
+  .dropzone.drag{border-color:var(--accent);background:#3b82f615;color:var(--text)}
+  .dropzone .icon{font-size:30px;margin-bottom:6px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px}
+  .card h3{margin:0 0 10px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+  .stat{display:flex;justify-content:space-between;margin:4px 0;font-size:13px}
+  .stat b{color:var(--text)}
+  .listwrap{flex:1;overflow:auto;padding:0 16px 16px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:10px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:middle}
+  th{position:sticky;top:0;background:var(--bg2);color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;z-index:1}
+  tr:hover{background:#ffffff06}
+  .name{font-weight:600;word-break:break-all}
+  .hash{font-family:Consolas,monospace;font-size:11px;color:var(--muted)}
+  .risk{padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700}
+  .risk.high{background:#ef444422;color:#fca5a5;border:1px solid #ef444455}
+  .risk.medium{background:#f59e0b22;color:#fcd34d;border:1px solid #f59e0b55}
+  .risk.low{background:#22c55e22;color:#86efac;border:1px solid #22c55e55}
+  .scorebar{height:6px;background:var(--bg);border-radius:999px;overflow:hidden;margin-top:4px}
+  .scorebar>div{height:100%;transition:width .3s}
+  .actions{display:flex;gap:4px;flex-wrap:wrap}
+  .actions button{padding:4px 8px;font-size:12px}
+  .empty{padding:40px;text-align:center;color:var(--muted)}
+  .toast{position:fixed;bottom:18px;right:18px;background:var(--panel2);border:1px solid var(--border);padding:12px 16px;border-radius:10px;box-shadow:0 8px 30px #0008;z-index:9999;max-width:360px;animation:slide .2s}
+  @keyframes slide{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+  .modal-back{position:fixed;inset:0;background:#000a;display:grid;place-items:center;z-index:10000}
+  .modal{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px;width:min(760px,94vw);max-height:90vh;overflow:auto}
+  .modal h2{margin:0 0 12px;font-size:17px}
+  .modal .row{margin:10px 0}
+  .modal label{display:block;color:var(--muted);font-size:12px;margin-bottom:4px}
+  .modal input,.modal textarea,.modal select{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:9px 10px;border-radius:8px;font-size:13px}
+  .modal .btns{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
+  .warnbox{background:#f59e0b15;border:1px solid #f59e0b55;color:#fcd34d;padding:10px 12px;border-radius:8px;font-size:12px;margin:8px 0}
+  .dangerbox{background:#ef444415;border:1px solid #ef444455;color:#fca5a5;padding:10px 12px;border-radius:8px;font-size:12px;margin:8px 0}
+  .infobox{background:#3b82f615;border:1px solid #3b82f655;color:#93c5fd;padding:10px 12px;border-radius:8px;font-size:12px;margin:8px 0}
+  .okbox{background:#22c55e15;border:1px solid #22c55e55;color:#86efac;padding:10px 12px;border-radius:8px;font-size:12px;margin:8px 0}
+  .kv{display:grid;grid-template-columns:150px 1fr;gap:6px 10px;font-size:13px}
+  .kv dt{color:var(--muted)}
+  .kv dd{margin:0;word-break:break-all;font-family:Consolas,monospace;font-size:12px}
+  .finding{background:var(--bg2);border:1px solid var(--border);border-left:4px solid var(--warn);border-radius:8px;padding:10px;margin:8px 0;font-size:12px}
+  .finding.crit{border-left-color:var(--danger)}
+  .finding.high{border-left-color:#f97316}
+  .finding.med{border-left-color:var(--warn)}
+  .finding.low{border-left-color:var(--cyan)}
+  .finding .title{font-weight:700;margin-bottom:4px;display:flex;justify-content:space-between;gap:8px}
+  .finding .line{font-family:Consolas,monospace;color:var(--muted);font-size:11px;white-space:pre-wrap;word-break:break-all;background:var(--bg);padding:6px;border-radius:6px;margin-top:4px;max-height:120px;overflow:auto}
+  .finding .reason{color:var(--text)}
+  .progress{height:6px;background:var(--bg);border-radius:999px;overflow:hidden;margin:8px 0}
+  .progress>div{height:100%;background:var(--accent);transition:width .2s}
+  .footerbar{padding:8px 16px;border-top:1px solid var(--border);color:var(--muted);font-size:12px;display:flex;gap:12px;align-items:center}
+  .spinner{display:inline-block;width:14px;height:14px;border:2px solid #ffffff33;border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:6px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .tabs{display:flex;gap:4px;margin-bottom:10px}
+  .tabbtn{padding:6px 10px;font-size:12px}
+  .tabbtn.active{background:var(--accent);border-color:var(--accent);color:#fff}
+  .tabcontent{display:none}
+  .tabcontent.active{display:block}
+  .mono{font-family:Consolas,monospace;font-size:12px}
+  .zipentry{padding:4px 0;border-bottom:1px solid var(--border);font-size:12px;display:flex;justify-content:space-between;gap:8px}
+  .zipentry.sus{color:#fca5a5}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">🛡️</div>
+  <div>
+    <h1>Coffre-Fort Malware — Stockage & Détection</h1>
+    <div class="sub">Quarantaine locale • Analyse statique ligne par ligne • Jamais exécuté</div>
+  </div>
+  <div class="spacer"></div>
+  <span id="lockBadge" class="badge off">Non protégé</span>
+  <button id="btnSettings" class="ghost" title="Paramètres">⚙️</button>
+  <button id="btnLock" class="ghost">Verrouiller</button>
+  <button id="btnProtect" class="primary">Protéger</button>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <div class="dropzone" id="dropzone">
+      <div class="icon">📥</div>
+      <div><b>Déposer des fichiers ici</b></div>
+      <div style="font-size:12px;margin-top:4px">ou cliquer pour sélectionner</div>
+      <input type="file" id="fileInput" multiple hidden>
+    </div>
+
+    <div class="card">
+      <h3>Actions globales</h3>
+      <button id="btnScanAll" style="width:100%;margin-bottom:6px" class="primary">🔍 Analyser tout</button>
+      <button id="btnExport" style="width:100%;margin-bottom:6px">Exporter le coffre</button>
+      <button id="btnImport" style="width:100%;margin-bottom:6px">Importer un coffre</button>
+      <input type="file" id="importInput" accept=".json,.vault" hidden>
+      <button id="btnClear" class="danger" style="width:100%">Vider le coffre</button>
+    </div>
+
+    <div class="card">
+      <h3>Statistiques</h3>
+      <div class="stat"><span>Fichiers</span><b id="stCount">0</b></div>
+      <div class="stat"><span>Taille totale</span><b id="stSize">0 o</b></div>
+      <div class="stat"><span>Risque élevé</span><b id="stHigh">0</b></div>
+      <div class="stat"><span>Menaces détectées</span><b id="stThreats">0</b></div>
+      <div class="stat"><span>Doublons (hash)</span><b id="stDup">0</b></div>
+    </div>
+
+    <div class="card">
+      <h3>Sécurité</h3>
+      <div class="warnbox">Stockage local uniquement (IndexedDB). Aucun fichier exécuté, ouvert ou envoyé. Analyse statique.</div>
+      <div class="infobox" id="vtStatus">VirusTotal : non configuré (optionnel)</div>
+    </div>
+  </aside>
+
+  <section class="main">
+    <div class="maintabs">
+      <button class="maintab active" data-view="storage">📦 Partie stockage (Quarantaine)</button>
+      <button class="maintab" data-view="scan">🔍 Partie détection (Analyse)</button>
+    </div>
+
+    <!-- STORAGE VIEW -->
+    <div id="viewStorage" class="view active">
+      <div class="toolbar">
+        <input type="search" id="search" placeholder="Rechercher nom, hash, type…">
+        <select id="filterRisk">
+          <option value="all">Tous les risques</option>
+          <option value="high">Élevé</option>
+          <option value="medium">Moyen</option>
+          <option value="low">Faible</option>
+        </select>
+        <select id="sortBy">
+          <option value="addedDesc">Plus récents</option>
+          <option value="addedAsc">Plus anciens</option>
+          <option value="nameAsc">Nom A→Z</option>
+          <option value="sizeDesc">Taille ↓</option>
+          <option value="riskDesc">Risque ↓</option>
+        </select>
+        <span id="resultCount" style="color:var(--muted);font-size:12px"></span>
+      </div>
+      <div class="listwrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Nom</th>
+              <th>Taille</th>
+              <th>Type / Contenu</th>
+              <th>Risque</th>
+              <th>SHA-256</th>
+              <th>Ajouté</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="tbodyStorage"></tbody>
+        </table>
+        <div id="emptyStorage" class="empty" style="display:none">
+          <div style="font-size:40px;margin-bottom:8px">📦</div>
+          Aucun fichier en quarantaine.<br>Déposez des fichiers pour commencer.
+        </div>
+      </div>
+    </div>
+
+    <!-- SCAN VIEW -->
+    <div id="viewScan" class="view">
+      <div class="toolbar">
+        <input type="search" id="searchScan" placeholder="Rechercher nom, menace, hash…">
+        <select id="filterThreat">
+          <option value="all">Toutes menaces</option>
+          <option value="threat">Menace détectée</option>
+          <option value="clean">Aucune menace</option>
+          <option value="unscanned">Non analysé</option>
+        </select>
+        <select id="sortByScan">
+          <option value="threatDesc">Menace ↓</option>
+          <option value="addedDesc">Plus récents</option>
+          <option value="nameAsc">Nom A→Z</option>
+          <option value="sizeDesc">Taille ↓</option>
+        </select>
+        <span id="resultCountScan" style="color:var(--muted);font-size:12px"></span>
+      </div>
+      <div class="listwrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Nom</th>
+              <th>Taille</th>
+              <th>Contenu détecté</th>
+              <th>Risque</th>
+              <th>Menace</th>
+              <th>Score</th>
+              <th>Détections</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="tbodyScan"></tbody>
+        </table>
+        <div id="emptyScan" class="empty" style="display:none">
+          <div style="font-size:40px;margin-bottom:8px">🔍</div>
+          Aucun fichier à analyser.<br>Ajoutez des fichiers dans la partie stockage.
+        </div>
+      </div>
+    </div>
+
+    <div class="footerbar">
+      <span>🔒 Stockage local uniquement — analyse statique, aucune exécution.</span>
+      <span style="flex:1"></span>
+      <span id="progressLabel"></span>
+    </div>
+  </section>
+</div>
+
+<!-- Unlock modal -->
+<div id="unlockModal" class="modal-back" style="display:none">
+  <div class="modal">
+    <h2>🔒 Déverrouiller le coffre</h2>
+    <div class="warnbox">Ce coffre contient des fichiers chiffrés. Saisissez le mot de passe.</div>
+    <div class="row"><label>Mot de passe</label><input type="password" id="unlockPass"></div>
+    <div id="unlockErr" class="dangerbox" style="display:none"></div>
+    <div class="btns">
+      <button id="unlockCancel">Annuler</button>
+      <button id="unlockOk" class="primary">Déverrouiller</button>
+    </div>
+  </div>
+</div>
+
+<!-- Protect modal -->
+<div id="protectModal" class="modal-back" style="display:none">
+  <div class="modal">
+    <h2 id="protectTitle">Protéger le coffre</h2>
+    <div id="protectInfo" class="warnbox"></div>
+    <div class="row" id="rowOldPass" style="display:none"><label>Ancien mot de passe</label><input type="password" id="oldPass"></div>
+    <div class="row"><label>Nouveau mot de passe</label><input type="password" id="newPass"></div>
+    <div class="row"><label>Confirmer</label><input type="password" id="newPass2"></div>
+    <div id="protectErr" class="dangerbox" style="display:none"></div>
+    <div class="btns">
+      <button id="protectCancel">Annuler</button>
+      <button id="protectOk" class="primary">Valider</button>
+    </div>
+  </div>
+</div>
+
+<!-- Detail modal -->
+<div id="detailModal" class="modal-back" style="display:none">
+  <div class="modal">
+    <h2>Détails du fichier</h2>
+    <dl class="kv" id="detailKv"></dl>
+    <div class="btns"><button id="detailClose">Fermer</button></div>
+  </div>
+</div>
+
+<!-- Restore modal -->
+<div id="restoreModal" class="modal-back" style="display:none">
+  <div class="modal">
+    <h2>⚠️ Restaurer le fichier</h2>
+    <div class="dangerbox">Téléchargement d'un fichier potentiellement malveillant. Ne l'exécutez pas. Confirmer ?</div>
+    <div id="restoreName" style="font-weight:600;margin:8px 0;word-break:break-all"></div>
+    <div class="btns">
+      <button id="restoreCancel">Annuler</button>
+      <button id="restoreOk" class="danger">Télécharger</button>
+    </div>
+  </div>
+</div>
+
+<!-- Scan modal -->
+<div id="scanModal" class="modal-back" style="display:none">
+  <div class="modal" style="width:min(900px,96vw)">
+    <h2>🔍 Analyse approfondie</h2>
+    <div id="scanSummary"></div>
+    <div class="tabs">
+      <button class="tabbtn active" data-tab="overview">Vue d'ensemble</button>
+      <button class="tabbtn" data-tab="findings">Détections (ligne par ligne)</button>
+      <button class="tabbtn" data-tab="strings">Chaînes suspectes</button>
+      <button class="tabbtn" data-tab="archive">Archive / PE</button>
+      <button class="tabbtn" data-tab="virustotal">VirusTotal</button>
+    </div>
+    <div id="tab-overview" class="tabcontent active"></div>
+    <div id="tab-findings" class="tabcontent"></div>
+    <div id="tab-strings" class="tabcontent"></div>
+    <div id="tab-archive" class="tabcontent"></div>
+    <div id="tab-virustotal" class="tabcontent"></div>
+    <div class="btns">
+      <button id="scanClose">Fermer</button>
+    </div>
+  </div>
+</div>
+
+<!-- Settings modal -->
+<div id="settingsModal" class="modal-back" style="display:none">
+  <div class="modal">
+    <h2>⚙️ Paramètres</h2>
+    <div class="row">
+      <label>Clé API VirusTotal (optionnelle)</label>
+      <input type="password" id="vtKey" placeholder="Collez votre clé API v3">
+    </div>
+    <div class="infobox">La clé est stockée localement. Sans clé, lien direct vers VirusTotal.</div>
+    <div class="row">
+      <label>Seuil d'alerte score (0-100)</label>
+      <input type="number" id="threshold" min="0" max="100" value="40">
+    </div>
+    <div class="btns">
+      <button id="settingsCancel">Annuler</button>
+      <button id="settingsSave" class="primary">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const DB_NAME='MalwareVault', DB_VER=1;
+let db=null, state={files:[], password:null, pendingRestore:null, pendingUnlockAction:null, vtKey:localStorage.getItem('vtKey')||'', threshold:parseInt(localStorage.getItem('threshold')||'40')};
+
+// ---------- utils ----------
+function fmtSize(b){ if(b<1024) return b+' o'; if(b<1048576) return (b/1024).toFixed(1)+' Ko'; if(b<1073741824) return (b/1048576).toFixed(1)+' Mo'; return (b/1073741824).toFixed(2)+' Go'; }
+function fmtDate(ts){ return new Date(ts).toLocaleString('fr-FR'); }
+function uid(){ return crypto.randomUUID(); }
+function esc(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function toast(msg,type='info'){ const t=document.createElement('div'); t.className='toast'; t.textContent=msg; if(type==='err') t.style.borderColor='var(--danger)'; if(type==='ok') t.style.borderColor='var(--ok)'; document.body.appendChild(t); setTimeout(()=>t.remove(),3200); }
+function showProgress(label){ document.getElementById('progressLabel').textContent=label; }
+function clearProgress(){ document.getElementById('progressLabel').textContent=''; }
+
+const HIGH_EXT=new Set(['exe','dll','bat','cmd','com','scr','pif','vbs','vbe','js','jse','wsf','wsh','ps1','psm1','msi','jar','apk','docm','xlsm','pptm','hta','reg','lnk','vbx']);
+const MED_EXT=new Set(['zip','rar','7z','tar','gz','iso','img','dmg','pdf','doc','xls','ppt','js','html','htm']);
+function riskOf(name){
+  const ext=(name.split('.').pop()||'').toLowerCase();
+  if(HIGH_EXT.has(ext)) return 'high';
+  if(MED_EXT.has(ext)) return 'medium';
+  return 'low';
+}
+
+const MAGIC=[
+  {sig:[0x4D,0x5A],name:'PE/EXE (MZ)',ext:'exe'},
+  {sig:[0x50,0x4B,0x03,0x04],name:'ZIP archive',ext:'zip'},
+  {sig:[0x50,0x4B,0x05,0x06],name:'ZIP (empty)',ext:'zip'},
+  {sig:[0x52,0x61,0x72,0x21],name:'RAR archive',ext:'rar'},
+  {sig:[0x7F,0x45,0x4C,0x46],name:'ELF binary',ext:'elf'},
+  {sig:[0x25,0x50,0x44,0x46],name:'PDF',ext:'pdf'},
+  {sig:[0xD0,0xCF,0x11,0xE0],name:'OLE2 (Office legacy)',ext:'doc'},
+  {sig:[0x89,0x50,0x4E,0x47],name:'PNG image',ext:'png'},
+  {sig:[0xFF,0xD8,0xFF],name:'JPEG image',ext:'jpg'},
+  {sig:[0x47,0x49,0x46],name:'GIF image',ext:'gif'},
+];
+function detectMagic(buf){
+  const b=new Uint8Array(buf);
+  for(const m of MAGIC){
+    if(b.length>=m.sig.length && m.sig.every((x,i)=>b[i]===x)) return m;
+  }
+  let text=true;
+  for(let i=0;i<Math.min(b.length,512);i++){ const c=b[i]; if(c===0){text=false;break;} if(c<9 || (c>13 && c<32)){text=false;break;} }
+  if(text && b.length>0) return {name:'Texte / script',ext:'txt'};
+  return {name:'Binaire inconnu',ext:'bin'};
+}
+function entropy(buf){
+  const b=new Uint8Array(buf); const counts=new Array(256).fill(0);
+  for(const x of b) counts[x]++;
+  let e=0; const n=b.length||1;
+  for(let i=0;i<256;i++){ if(counts[i]){ const p=counts[i]/n; e-=p*Math.log2(p);} }
+  return e;
+}
+
+const TEXT_RULES=[
+  {id:'eval',name:'Appel eval()',sev:25,rx:/\beval\s*\(/i,desc:'Exécution dynamique de code (eval).'},
+  {id:'newfunc',name:'new Function()',sev:25,rx:/new\s+Function\s*\(/i,desc:'Création de fonction depuis une chaîne.'},
+  {id:'docwrite',name:'document.write',sev:10,rx:/document\.write\s*\(/i,desc:'Écriture dans le document (injection).'},
+  {id:'atob',name:'atob / décodage base64',sev:12,rx:/\batob\s*\(/i,desc:'Décodage base64 souvent utilisé pour masquer du code.'},
+  {id:'fromchar',name:'fromCharCode',sev:15,rx:/fromCharCode/i,desc:'Construction de chaînes caractère par caractère (obfuscation).'},
+  {id:'unescape',name:'unescape',sev:10,rx:/\bunescape\s*\(/i,desc:'Décodage d\'URL (obfuscation).'},
+  {id:'powershell',name:'PowerShell',sev:20,rx:/powershell/i,desc:'Référence à PowerShell.'},
+  {id:'psenc',name:'PowerShell encodé',sev:35,rx:/-enc(odedcommand)?\b/i,desc:'Commande PowerShell encodée en base64.'},
+  {id:'cmdc',name:'cmd /c',sev:20,rx:/cmd\s*\/c/i,desc:'Exécution de commande via cmd.'},
+  {id:'iex',name:'Invoke-Expression / iex',sev:30,rx:/\biex\b|Invoke-Expression/i,desc:'Exécution dynamique PowerShell.'},
+  {id:'wget',name:'wget / curl',sev:15,rx:/\b(wget|curl)\s/i,desc:'Téléchargement réseau.'},
+  {id:'createobj',name:'CreateObject',sev:20,rx:/CreateObject\s*\(/i,desc:'Création d\'objet COM (script malveillant).'},
+  {id:'wscript',name:'WScript.Shell',sev:25,rx:/WScript\.Shell/i,desc:'Shell Windows via WScript.'},
+  {id:'shell',name:'Shell()',sev:15,rx:/\bShell\s*\(/i,desc:'Lancement de programme.'},
+  {id:'autoopen',name:'AutoOpen / Document_Open',sev:30,rx:/AutoOpen|Document_Open|Workbook_Open|Auto_Open/i,desc:'Macro exécutée à l\'ouverture (Office).'},
+  {id:'base64blob',name:'Bloc base64 long',sev:18,rx:/[A-Za-z0-9+\/]{120,}={0,2}/,desc:'Longue chaîne base64 (payload masqué).'},
+  {id:'hexshell',name:'Séquence hexadécimale',sev:20,rx:/(?:\\x[0-9a-f]{2}){12,}/i,desc:'Shellcode / octets hexadécimaux.'},
+  {id:'ipurl',name:'URL avec IP',sev:15,rx:/https?:\/\/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/i,desc:'Connexion vers une adresse IP brute.'},
+  {id:'exeurl',name:'Téléchargement .exe',sev:25,rx:/https?:\/\/[^\s"']+\.(exe|dll|scr|bat|ps1)/i,desc:'URL pointant vers un exécutable.'},
+  {id:'autorun',name:'autorun.inf',sev:25,rx:/\[autorun\]/i,desc:'Fichier autorun (propagation USB).'},
+  {id:'vba',name:'VBA suspect',sev:12,rx:/\b(Shell|Environ|Kill|FileCopy|Open\s+".*"\s+For)\b/i,desc:'Instructions VBA sensibles.'},
+  {id:'keylog',name:'Keylogger',sev:35,rx:/GetAsyncKeyState|keylog/i,desc:'Capture de frappes clavier.'},
+  {id:'inject',name:'Injection de processus',sev:40,rx:/VirtualAlloc|WriteProcessMemory|CreateRemoteThread|NtUnmapViewOfSection/i,desc:'Techniques d\'injection de code.'},
+  {id:'persist',name:'Persistance registre',sev:20,rx:/HKEY_|CurrentVersion\\Run|SOFTWARE\\Microsoft\\Windows\\CurrentVersion/i,desc:'Modification du registre pour persistance.'},
+  {id:'ransom',name:'Ransomware',sev:30,rx:/ransom|encrypt.*files|\.locked|bitcoin|wallet/i,desc:'Termes liés aux ransomwares.'},
+  {id:'obfchar',name:'Obfuscation char()',sev:15,rx:/\bchar\s*\(\s*\d+/i,desc:'Construction de chaînes via char().'},
+  {id:'scripttag',name:'Balise script',sev:8,rx:/<script\b/i,desc:'Présence de script embarqué.'},
+  {id:'onload',name:'Gestionnaire d\'événement inline',sev:8,rx:/on(load|click|error|mouseover)\s*=/i,desc:'Événement inline (XSS).'},
+  {id:'datauri',name:'Data URI suspect',sev:12,rx:/data:[a-z]+\/[a-z]+;base64,/i,desc:'Data URI encodé en base64.'},
+  {id:'longline',name:'Ligne très longue',sev:5,rx:/.{500,}/,desc:'Ligne anormalement longue (obfuscation).'},
+];
+
+function scanTextLines(text){
+  const lines=text.split(/\r?\n/);
+  const findings=[];
+  const ruleHits=new Map();
+  lines.forEach((line,idx)=>{
+    for(const r of TEXT_RULES){
+      if(r.rx.test(line)){
+        findings.push({rule:r.id,name:r.name,sev:r.sev,line:idx+1,snippet:line.trim().slice(0,300),desc:r.desc});
+        ruleHits.set(r.id,(ruleHits.get(r.id)||0)+1);
+      }
+    }
+  });
+  return {findings,lines:lines.length,ruleHits};
+}
+
+function extractStrings(buf,min=4){
+  const b=new Uint8Array(buf); const out=[]; let cur='';
+  for(let i=0;i<b.length;i++){
+    const c=b[i];
+    if(c>=32 && c<127){ cur+=String.fromCharCode(c); }
+    else { if(cur.length>=min) out.push(cur); cur=''; }
+  }
+  if(cur.length>=min) out.push(cur);
+  return [...new Set(out)].slice(0,2000);
+}
+
+function parsePE(buf){
+  try{
+    const v=new DataView(buf);
+    const peOffset=v.getUint32(0x3C,true);
+    if(v.getUint32(peOffset,true)!==0x00004550) return null;
+    const coff=peOffset+4;
+    const numSections=v.getUint16(coff+2,true);
+    const optHeaderSize=v.getUint16(coff+16,true);
+    const magic=v.getUint16(coff+20,true);
+    const is64=magic===0x20b;
+    const sectionsOffset=coff+20+optHeaderSize;
+    const secs=[];
+    for(let i=0;i<numSections;i++){
+      const off=sectionsOffset+i*40;
+      const name=String.fromCharCode(...new Uint8Array(buf,off,8)).replace(/\0/g,'');
+      const vsize=v.getUint32(off+8,true);
+      const rsize=v.getUint32(off+16,true);
+      const rptr=v.getUint32(off+20,true);
+      const va=v.getUint32(off+12,true);
+      const secBuf=buf.slice(rptr,rptr+rsize);
+      const ent=secBuf.byteLength?entropy(secBuf):0;
+      secs.push({name,vsize,rsize,rptr,va,entropy:ent});
+    }
+    const importDirRVA=is64?v.getUint32(coff+20+112,true):v.getUint32(coff+20+104,true);
+    const suspicious=new Set();
+    const SUSP_IMPORTS=['VirtualAlloc','VirtualAllocEx','WriteProcessMemory','CreateRemoteThread','NtUnmapViewOfSection','LoadLibraryA','GetProcAddress','CreateProcessA','WinExec','ShellExecuteA','URLDownloadToFileA','InternetOpenA','RegSetValueExA','SetWindowsHookExA','GetAsyncKeyState'];
+    function r2o(rva){ for(const s of secs){ if(rva>=s.va && rva<s.va+s.vsize) return s.rptr+(rva-s.va);} return null; }
+    if(importDirRVA){
+      const off=r2o(importDirRVA);
+      if(off!==null){
+        let cur=off;
+        while(true){
+          const ilt=v.getUint32(cur,true);
+          const nameRVA=v.getUint32(cur+12,true);
+          if(ilt===0 && nameRVA===0) break;
+          const dllOff=r2o(nameRVA);
+          const thunkRVA=v.getUint32(cur,true)||v.getUint32(cur+16,true);
+          let tOff=r2o(thunkRVA);
+          if(tOff!==null){
+            while(true){
+              const val=is64?v.getBigUint64(tOff,true):v.getUint32(tOff,true);
+              if(val===0n||val===0) break;
+              let nameOff;
+              if(is64){ if(!((val>>63n)&1n)) nameOff=r2o(Number(val)); }
+              else { if(!(val&0x80000000)) nameOff=r2o(val); }
+              if(nameOff!==null){
+                let nm=''; let i=nameOff+2; while(i<buf.byteLength && v.getUint8(i)!==0){nm+=String.fromCharCode(v.getUint8(i));i++;}
+                if(SUSP_IMPORTS.includes(nm)) suspicious.add(nm);
+              }
+              tOff+=is64?8:4;
+            }
+          }
+          cur+=20;
+          if(cur>buf.byteLength) break;
+        }
+      }
+    }
+    const highEnt=secs.filter(s=>s.entropy>7.2 && s.rsize>512).map(s=>s.name);
+    const overlayOffset = secs.length? (secs[secs.length-1].rptr+secs[secs.length-1].rsize) : 0;
+    const overlaySize = Math.max(0, buf.byteLength - overlayOffset);
+    return {sections:secs,suspiciousImports:[...suspicious],highEntropySections:highEnt,overlaySize};
+  }catch(e){ return null; }
+}
+
+function parseZip(buf){
+  const v=new DataView(buf); const b=new Uint8Array(buf);
+  let eocd=-1;
+  for(let i=buf.byteLength-22;i>=0;i--){
+    if(v.getUint32(i,true)===0x06054b50){ eocd=i; break; }
+  }
+  if(eocd<0) return null;
+  const cdSize=v.getUint32(eocd+12,true);
+  const cdOffset=v.getUint32(eocd+16,true);
+  const entries=[];
+  let pos=cdOffset;
+  const end=cdOffset+cdSize;
+  while(pos<end && pos+46<=buf.byteLength){
+    if(v.getUint32(pos,true)!==0x02014b50) break;
+    const nameLen=v.getUint16(pos+28,true);
+    const extraLen=v.getUint16(pos+30,true);
+    const commentLen=v.getUint16(pos+32,true);
+    const size=v.getUint32(pos+24,true);
+    const name=String.fromCharCode(...b.slice(pos+46,pos+46+nameLen));
+    entries.push({name,size});
+    pos+=46+nameLen+extraLen+commentLen;
+  }
+  return entries;
+}
+
+function scanBinary(buf){
+  const findings=[];
+  const magic=detectMagic(buf);
+  const e=entropy(buf);
+  const strings=extractStrings(buf);
+  const susStrings=[];
+  const strRules=[
+    {rx:/https?:\/\/[^\s"']{6,}/i,name:'URL'},
+    {rx:/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/,name:'IP'},
+    {rx:/powershell|cmd\.exe|wscript|cscript/i,name:'Shell'},
+    {rx:/VirtualAlloc|WriteProcessMemory|CreateRemoteThread/i,name:'Injection'},
+    {rx:/HKEY_|CurrentVersion\\Run/i,name:'Persistance'},
+    {rx:/password|passwd|secret/i,name:'Mot de passe'},
+  ];
+  for(const s of strings){
+    for(const r of strRules){
+      if(r.rx.test(s)){ susStrings.push({value:s,kind:r.name}); break; }
+    }
+  }
+  let pe=null;
+  if(magic.name.includes('PE')){
+    pe=parsePE(buf);
+    if(pe){
+      if(pe.suspiciousImports.length) findings.push({rule:'pe_imports',name:'Imports PE suspects',sev:30,desc:'Imports sensibles: '+pe.suspiciousImports.join(', '),line:0,snippet:''});
+      if(pe.highEntropySections.length) findings.push({rule:'pe_entropy',name:'Sections à haute entropie',sev:25,desc:'Sections packées/chiffrées: '+pe.highEntropySections.join(', '),line:0,snippet:''});
+      if(pe.overlaySize>1024) findings.push({rule:'pe_overlay',name:'Overlay PE',sev:15,desc:'Données supplémentaires après le PE ('+fmtSize(pe.overlaySize)+').',line:0,snippet:''});
+    }
+  }
+  if(e>7.5 && buf.byteLength>1024) findings.push({rule:'high_entropy',name:'Haute entropie',sev:20,desc:'Entropie '+e.toFixed(2)+' — fichier possiblement compressé/chiffré/packé.',line:0,snippet:''});
+  return {magic,entropy:e,strings,susStrings,pe,findings};
+}
+
+function scoreFindings(findings,extra=0){
+  let s=findings.reduce((a,f)=>a+f.sev,0)+extra;
+  if(s>100) s=100;
+  return s;
+}
+function threatLevel(score){
+  if(score>=70) return {label:'CRITIQUE',cls:'crit',color:'var(--danger)'};
+  if(score>=40) return {label:'ÉLEVÉ',cls:'high',color:'#f97316'};
+  if(score>=15) return {label:'MOYEN',cls:'med',color:'var(--warn)'};
+  if(score>0) return {label:'FAIBLE',cls:'low',color:'var(--cyan)'};
+  return {label:'PROPRE',cls:'low',color:'var(--ok)'};
+}
+
+async function analyzeFile(f){
+  showProgress('Analyse: '+f.name);
+  let data=f.data;
+  if(f.encrypted){
+    if(!state.password){ toast('Déverrouillez pour analyser les fichiers chiffrés','err'); return null; }
+    data=await decryptBuffer(state.password,f);
+  }
+  const buf=data instanceof ArrayBuffer?data:data.buffer;
+  const magic=detectMagic(buf);
+  const ent=entropy(buf);
+  let findings=[];
+  let textScan=null, binScan=null, zipEntries=null;
+  let text=null;
+  try{ text=new TextDecoder('utf-8',{fatal:true}).decode(buf); }catch(e){ text=null; }
+  if(text!==null){
+    textScan=scanTextLines(text);
+    findings=findings.concat(textScan.findings);
+  } else {
+    binScan=scanBinary(buf);
+    findings=findings.concat(binScan.findings);
+  }
+  if(magic.name.includes('ZIP')||f.name.toLowerCase().endsWith('.zip')){
+    zipEntries=parseZip(buf);
+    if(zipEntries){
+      for(const e of zipEntries){
+        const nm=e.name.toLowerCase();
+        if(/\.(exe|dll|scr|bat|ps1|vbs|js)$/i.test(nm)) findings.push({rule:'zip_exec',name:'Exécutable dans l\'archive',sev:30,desc:'Entrée: '+e.name,snippet:'',line:0});
+        if(/\.\.[\\/]/.test(e.name)) findings.push({rule:'zip_traversal',name:'Path traversal',sev:40,desc:'Entrée: '+e.name,snippet:'',line:0});
+        if(/\.(jpg|png|pdf)\.(exe|scr|bat)$/i.test(nm)) findings.push({rule:'zip_double',name:'Double extension',sev:35,desc:'Entrée: '+e.name,snippet:'',line:0});
+      }
+    }
+  }
+  const ext=(f.name.split('.').pop()||'').toLowerCase();
+  if(magic.ext && ext && magic.ext!==ext && magic.ext!=='txt'){
+    if(['exe','zip','rar','elf','pdf','doc'].includes(magic.ext)){
+      findings.push({rule:'mismatch',name:'Extension ≠ contenu',sev:25,desc:'Extension .'+ext+' mais contenu détecté: '+magic.name,line:0,snippet:''});
+    }
+  }
+  const extra = (ext==='exe'||ext==='dll'||ext==='scr')?5:0;
+  const score=scoreFindings(findings,extra);
+  const vtLink='https://www.virustotal.com/gui/file/'+f.hash;
+  const res={
+    scannedAt:Date.now(), score, magic:magic.name, entropy:ent.toFixed(2),
+    findings, textLines:textScan?textScan.lines:0, ruleHits:textScan?Object.fromEntries(textScan.ruleHits):{},
+    strings: binScan?binScan.susStrings:[], zipEntries, vtLink, text:!!text
+  };
+  f.scan=res;
+  await putFile(f);
+  const idx=state.files.findIndex(x=>x.id===f.id);
+  if(idx>=0) state.files[idx]=f;
+  clearProgress();
+  return res;
+}
+
+// ---------- db ----------
+function openDB(){
+  return new Promise((res,rej)=>{
+    const r=indexedDB.open(DB_NAME,DB_VER);
+    r.onupgradeneeded=e=>{
+      const d=e.target.result;
+      if(!d.objectStoreNames.contains('files')){
+        const s=d.createObjectStore('files',{keyPath:'id'});
+        s.createIndex('hash','hash',{unique:false});
+        s.createIndex('addedAt','addedAt',{unique:false});
+        s.createIndex('name','name',{unique:false});
+      }
+      if(!d.objectStoreNames.contains('meta')) d.createObjectStore('meta',{keyPath:'key'});
+    };
+    r.onsuccess=e=>{db=e.target.result;res(db);};
+    r.onerror=e=>rej(e.target.error);
+  });
+}
+function tx(store,mode='readonly'){ return db.transaction(store,mode).objectStore(store); }
+function reqToPromise(req){ return new Promise((res,rej)=>{req.onsuccess=e=>res(e.target.result);req.onerror=e=>rej(e.target.error);}); }
+function getAllFiles(){ return reqToPromise(tx('files').getAll()); }
+function putFile(rec){ return reqToPromise(tx('files','readwrite').put(rec)); }
+function deleteFile(id){ return reqToPromise(tx('files','readwrite').delete(id)); }
+function clearFiles(){ return reqToPromise(tx('files','readwrite').clear()); }
+function getMeta(key){ return reqToPromise(tx('meta').get(key)); }
+function putMeta(rec){ return reqToPromise(tx('meta','readwrite').put(rec)); }
+function deleteMeta(key){ return reqToPromise(tx('meta','readwrite').delete(key)); }
+
+// ---------- crypto ----------
+function bufToBase64(buf){ let b=''; const a=new Uint8Array(buf); for(let i=0;i<a.length;i++) b+=String.fromCharCode(a[i]); return btoa(b); }
+function base64ToBuf(b64){ const bin=atob(b64); const a=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) a[i]=bin.charCodeAt(i); return a.buffer; }
+function u8ToBase64(u8){ return bufToBase64(u8.buffer); }
+function base64ToU8(b64){ return new Uint8Array(base64ToBuf(b64)); }
+async function sha256(buf){ const h=await crypto.subtle.digest('SHA-256',buf); return Array.from(new Uint8Array(h)).map(x=>x.toString(16).padStart(2,'0')).join(''); }
+async function deriveKey(password,salt){
+  const base=await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveKey']);
+  return crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations:100000,hash:'SHA-256'},base,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+}
+async function encryptBuffer(password,buf){
+  const salt=crypto.getRandomValues(new Uint8Array(16));
+  const key=await deriveKey(password,salt);
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,buf);
+  return {encrypted:true, salt:new Uint8Array(salt), iv:new Uint8Array(iv), data:ct};
+}
+async function decryptBuffer(password,rec){
+  const key=await deriveKey(password,rec.salt);
+  return crypto.subtle.decrypt({name:'AES-GCM',iv:rec.iv},key,rec.data);
+}
+async function createCanary(password){
+  const enc=new TextEncoder().encode('VAULT_OK');
+  const {salt,iv,data}=await encryptBuffer(password,enc.buffer);
+  await putMeta({key:'canary',salt:u8ToBase64(salt),iv:u8ToBase64(iv),data:bufToBase64(data)});
+}
+async function verifyPassword(password){
+  const c=await getMeta('canary');
+  if(c){
+    try{
+      const buf=await decryptBuffer(password,{salt:base64ToU8(c.salt),iv:base64ToU8(c.iv),data:base64ToBuf(c.data)});
+      return new TextDecoder().decode(buf)==='VAULT_OK';
+    }catch(e){ return false; }
+  }
+  const f=state.files.find(x=>x.encrypted);
+  if(!f) return true;
+  try{ await decryptBuffer(password,f); return true; }catch(e){ return false; }
+}
+
+// ---------- rendering ----------
+function updateStats(){
+  const files=state.files;
+  document.getElementById('stCount').textContent=files.length;
+  document.getElementById('stSize').textContent=fmtSize(files.reduce((a,f)=>a+f.size,0));
+  document.getElementById('stHigh').textContent=files.filter(f=>f.risk==='high').length;
+  document.getElementById('stThreats').textContent=files.filter(f=>f.scan && f.scan.score>=state.threshold).length;
+  const hashes=new Map();
+  files.forEach(f=>hashes.set(f.hash,(hashes.get(f.hash)||0)+1));
+  const dup=Object.values(Object.fromEntries(hashes)).filter(n=>n>1).reduce((a,n)=>a+(n-1),0);
+  document.getElementById('stDup').textContent=dup;
+  const vt=document.getElementById('vtStatus');
+  if(state.vtKey){ vt.textContent='VirusTotal : clé configurée'; vt.className='okbox'; }
+  else { vt.textContent='VirusTotal : non configuré (optionnel)'; vt.className='infobox'; }
+}
+function riskLabel(r){ return r==='high'?'Élevé':r==='medium'?'Moyen':'Faible'; }
+function threatLevelColor(s){ return threatLevel(s).color; }
+
+function filteredStorage(){
+  const q=document.getElementById('search').value.toLowerCase().trim();
+  const rf=document.getElementById('filterRisk').value;
+  const sort=document.getElementById('sortBy').value;
+  let arr=state.files.filter(f=>{
+    if(rf!=='all' && f.risk!==rf) return false;
+    if(q){
+      const hay=(f.name+' '+f.hash+' '+f.type).toLowerCase();
+      if(!hay.includes(q)) return false;
+    }
+    return true;
+  });
+  arr.sort((a,b)=>{
+    switch(sort){
+      case 'addedDesc': return b.addedAt-a.addedAt;
+      case 'addedAsc': return a.addedAt-b.addedAt;
+      case 'nameAsc': return a.name.localeCompare(b.name,'fr');
+      case 'sizeDesc': return b.size-a.size;
+      case 'riskDesc': {const o={high:0,medium:1,low:2}; return o[a.risk]-o[b.risk];}
+    }
+    return 0;
+  });
+  return arr;
+}
+function filteredScan(){
+  const q=document.getElementById('searchScan').value.toLowerCase().trim();
+  const tf=document.getElementById('filterThreat').value;
+  const sort=document.getElementById('sortByScan').value;
+  let arr=state.files.filter(f=>{
+    if(tf==='threat' && !(f.scan && f.scan.score>=state.threshold)) return false;
+    if(tf==='clean' && f.scan && f.scan.score>=state.threshold) return false;
+    if(tf==='unscanned' && f.scan) return false;
+    if(q){
+      const hay=(f.name+' '+f.hash+' '+(f.scan?f.scan.magic:'')+' '+(f.scan?f.findings.map(x=>x.name).join(' '):'')).toLowerCase();
+      if(!hay.includes(q)) return false;
+    }
+    return true;
+  });
+  arr.sort((a,b)=>{
+    switch(sort){
+      case 'addedDesc': return b.addedAt-a.addedAt;
+      case 'nameAsc': return a.name.localeCompare(b.name,'fr');
+      case 'sizeDesc': return b.size-a.size;
+      case 'threatDesc': return (b.scan?b.scan.score:0)-(a.scan?a.scan.score:0);
+    }
+    return 0;
+  });
+  return arr;
+}
+function renderStorage(){
+  const tbody=document.getElementById('tbodyStorage');
+  const empty=document.getElementById('emptyStorage');
+  const arr=filteredStorage();
+  document.getElementById('resultCount').textContent=arr.length+' / '+state.files.length;
+  if(arr.length===0){ tbody.innerHTML=''; empty.style.display='block'; }
+  else {
+    empty.style.display='none';
+    tbody.innerHTML=arr.map(f=>{
+      const magic=f.scan?f.scan.magic:detectMagic(f.data&&f.data.buffer?f.data.buffer:f.data).name;
+      return `<tr>
+      <td><div class="name">${esc(f.name)}${f.encrypted?' 🔒':''}</div></td>
+      <td>${fmtSize(f.size)}</td>
+      <td style="font-size:11px;color:var(--muted)">${esc(f.type||'—')}<br><span style="color:var(--cyan)">${esc(magic)}</span></td>
+      <td><span class="risk ${f.risk}">${riskLabel(f.risk)}</span></td>
+      <td class="hash" title="${f.hash}">${f.hash.slice(0,12)}…</td>
+      <td style="font-size:11px;color:var(--muted)">${fmtDate(f.addedAt)}</td>
+      <td class="actions">
+        <button onclick="analyzeOne('${f.id}')" title="Analyser">🔍</button>
+        <button onclick="openDetail('${f.id}')" title="Détails">ℹ️</button>
+        <button onclick="requestRestore('${f.id}')" title="Restaurer">⬇️</button>
+        <button onclick="deleteOne('${f.id}')" title="Supprimer">🗑️</button>
+      </td>
+    </tr>`;}).join('');
+  }
+}
+function renderScan(){
+  const tbody=document.getElementById('tbodyScan');
+  const empty=document.getElementById('emptyScan');
+  const arr=filteredScan();
+  document.getElementById('resultCountScan').textContent=arr.length+' / '+state.files.length;
+  if(arr.length===0){ tbody.innerHTML=''; empty.style.display='block'; }
+  else {
+    empty.style.display='none';
+    tbody.innerHTML=arr.map(f=>{
+      const sc=f.scan?f.scan.score:0;
+      const tl=f.scan?threatLevel(sc):{label:'—',color:'var(--muted)'};
+      const magic=f.scan?f.scan.magic:detectMagic(f.data&&f.data.buffer?f.data.buffer:f.data).name;
+      return `<tr>
+      <td><div class="name">${esc(f.name)}${f.encrypted?' 🔒':''}</div>
+        <div class="scorebar"><div style="width:${sc}%;background:${tl.color}"></div></div></td>
+      <td>${fmtSize(f.size)}</td>
+      <td style="font-size:11px;color:var(--cyan)">${esc(magic)}</td>
+      <td><span class="risk ${f.risk}">${riskLabel(f.risk)}</span></td>
+      <td><span class="badge score" style="color:${tl.color};border-color:${tl.color}55">${tl.label}</span></td>
+      <td style="font-weight:700;color:${tl.color}">${sc}/100</td>
+      <td style="font-size:12px">${f.scan?f.scan.findings.length:'0'}</td>
+      <td class="actions">
+        <button onclick="analyzeOne('${f.id}')" title="Analyser">🔍</button>
+        <button onclick="openScan('${f.id}')" title="Rapport">📊</button>
+        <button onclick="openDetail('${f.id}')" title="Détails">ℹ️</button>
+      </td>
+    </tr>`;}).join('');
+  }
+}
+function render(){
+  renderStorage();
+  renderScan();
+  updateStats();
+  updateLockUI();
+}
+
+function updateLockUI(){
+  const badge=document.getElementById('lockBadge');
+  const btnLock=document.getElementById('btnLock');
+  const btnProt=document.getElementById('btnProtect');
+  if(state.password){
+    badge.className='badge unlocked'; badge.textContent='Protégé (déverrouillé)';
+    btnLock.disabled=false; btnProt.textContent='Changer le mot de passe';
+  } else {
+    const hasEnc=state.files.some(f=>f.encrypted);
+    if(hasEnc){
+      badge.className='badge locked'; badge.textContent='Verrouillé';
+      btnLock.disabled=true; btnProt.textContent='Protéger / Déverrouiller';
+    } else {
+      badge.className='badge off'; badge.textContent='Non protégé';
+      btnLock.disabled=true; btnProt.textContent='Protéger par mot de passe';
+    }
+  }
+}
+
+// ---------- add files ----------
+async function addFiles(fileList){
+  const files=Array.from(fileList);
+  if(!files.length) return;
+  let added=0;
+  showProgress('Traitement…');
+  for(let i=0;i<files.length;i++){
+    const f=files[i];
+    showProgress(`Traitement ${i+1}/${files.length}: ${f.name}`);
+    try{
+      const buf=await f.arrayBuffer();
+      const hash=await sha256(buf);
+      const duplicate=state.files.some(x=>x.hash===hash);
+      let rec={id:uid(),name:f.name,size:f.size,type:f.type||'application/octet-stream',lastModified:f.lastModified,addedAt:Date.now(),hash,risk:riskOf(f.name),quarantined:true,encrypted:false,notes:'',scan:null};
+      if(state.password){
+        const e=await encryptBuffer(state.password,buf);
+        rec.encrypted=true; rec.salt=e.salt; rec.iv=e.iv; rec.data=e.data;
+      } else {
+        rec.data=buf;
+      }
+      rec.duplicate=duplicate;
+      await putFile(rec);
+      state.files.push(rec);
+      added++;
+    }catch(err){ console.error(err); toast('Erreur: '+f.name,'err'); }
+  }
+  clearProgress();
+  render();
+  toast(added+' fichier(s) ajouté(s)','ok');
+  for(const f of state.files.slice(-added)){ await analyzeOne(f.id,true); }
+}
+
+// ---------- analyze ----------
+async function analyzeOne(id,silent=false){
+  const f=state.files.find(x=>x.id===id);
+  if(!f) return;
+  const res=await analyzeFile(f);
+  if(!res) return;
+  render();
+  if(!silent) openScan(id);
+}
+async function analyzeAll(){
+  let n=0;
+  for(const f of [...state.files]){
+    await analyzeOne(f.id,true);
+    n++;
+    showProgress(`Analyse ${n}/${state.files.length}`);
+  }
+  clearProgress();
+  toast(n+' fichier(s) analysé(s)','ok');
+  render();
+}
+
+// ---------- scan modal ----------
+function openScan(id){
+  const f=state.files.find(x=>x.id===id);
+  if(!f) return;
+  if(!f.scan){ analyzeOne(id,false); return; }
+  const s=f.scan;
+  const tl=threatLevel(s.score);
+  document.getElementById('scanSummary').innerHTML=`
+    <div class="infobox"><b>${esc(f.name)}</b> — Score de menace: <b style="color:${tl.color}">${s.score}/100 (${tl.label})</b> — ${s.findings.length} détection(s) — ${s.text?'analyse textuelle ligne par ligne':'analyse binaire'} — entropie ${s.entropy}</div>`;
+  document.getElementById('tab-overview').innerHTML=`
+    <div class="kv">
+      <dt>Fichier</dt><dd>${esc(f.name)}</dd>
+      <dt>Taille</dt><dd>${fmtSize(f.size)}</dd>
+      <dt>Type déclaré</dt><dd>${esc(f.type)}</dd>
+      <dt>Contenu détecté</dt><dd>${esc(s.magic)}</dd>
+      <dt>Entropie</dt><dd>${s.entropy} ${parseFloat(s.entropy)>7.5?'(élevée — packé/chiffré possible)':''}</dd>
+      <dt>SHA-256</dt><dd>${f.hash}</dd>
+      <dt>Lignes analysées</dt><dd>${s.textLines||'n/a (binaire)'}</dd>
+      <dt>Détections</dt><dd>${s.findings.length}</dd>
+      <dt>Score</dt><dd style="color:${tl.color};font-weight:700">${s.score}/100 — ${tl.label}</dd>
+    </div>
+    ${s.findings.length?`<div class="warnbox" style="margin-top:10px"><b>Cause probable :</b> ${esc(causeSummary(s))}</div>`:`<div class="okbox" style="margin-top:10px">Aucune menace détectée par l'analyse statique.</div>`}
+  `;
+  const grouped=s.findings;
+  document.getElementById('tab-findings').innerHTML = grouped.length? grouped.map(fd=>{
+    const cls=fd.sev>=40?'crit':fd.sev>=25?'high':fd.sev>=15?'med':'low';
+    return `<div class="finding ${cls}">
+      <div class="title"><span>${esc(fd.name)}</span><span style="color:var(--muted)">ligne ${fd.line||'—'} • sévérité ${fd.sev}</span></div>
+      <div class="reason">${esc(fd.desc)}</div>
+      ${fd.snippet?`<div class="line">${esc(fd.snippet)}</div>`:''}
+    </div>`;}).join('') : '<div class="okbox">Aucune détection.</div>';
+  const strs=s.strings||[];
+  document.getElementById('tab-strings').innerHTML = strs.length? `<div style="font-size:12px;color:var(--muted);margin-bottom:6px">${strs.length} chaîne(s) suspecte(s).</div>`+strs.map(x=>`<div class="zipentry ${x.kind==='Injection'?'sus':''}"><span class="mono">${esc(x.value.slice(0,200))}</span><span style="color:var(--muted)">${esc(x.kind)}</span></div>`).join('') : '<div class="okbox">Aucune chaîne suspecte (ou fichier texte).</div>';
+  let archHtml='';
+  if(s.zipEntries){
+    archHtml+=`<div style="margin-bottom:8px"><b>Entrées de l'archive (${s.zipEntries.length}) :</b></div>`;
+    archHtml+=s.zipEntries.map(e=>`<div class="zipentry ${/\.(exe|dll|scr|bat|ps1|vbs)$/i.test(e.name)?'sus':''}"><span>${esc(e.name)}</span><span style="color:var(--muted)">${fmtSize(e.size)}</span></div>`).join('');
+  }
+  archHtml+=`<div style="margin-top:10px" class="kv"><dt>Magie</dt><dd>${esc(s.magic)}</dd><dt>Entropie</dt><dd>${s.entropy}</dd></div>`;
+  document.getElementById('tab-archive').innerHTML = archHtml||'<div class="okbox">Pas d\'archive détectée.</div>';
+  document.getElementById('tab-virustotal').innerHTML = `
+    <div class="infobox">VirusTotal vérifie le fichier par son hash SHA-256 auprès de 70+ moteurs antivirus.</div>
+    <div class="row"><label>SHA-256</label><input type="text" readonly value="${f.hash}" onclick="this.select()"></div>
+    <div class="btns" style="justify-content:flex-start">
+      <a href="${s.vtLink}" target="_blank" rel="noopener" style="text-decoration:none"><button class="primary">🔗 Ouvrir sur VirusTotal</button></a>
+      <button onclick="vtQuery('${f.id}')">Interroger l'API VirusTotal</button>
+    </div>
+    <div id="vtResult" style="margin-top:10px"></div>
+    ${state.vtKey?'':'<div class="warnbox">Clé API non configurée — vérification manuelle via le lien. Configurez une clé dans ⚙️.</div>'}
+  `;
+  document.getElementById('scanModal').style.display='grid';
+  document.querySelectorAll('#scanModal .tabbtn').forEach(btn=>{
+    btn.onclick=()=>{
+      document.querySelectorAll('#scanModal .tabbtn').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      document.querySelectorAll('#scanModal .tabcontent').forEach(c=>c.classList.remove('active'));
+      document.getElementById('tab-'+btn.dataset.tab).classList.add('active');
+    };
+  });
+}
+function causeSummary(s){
+  if(!s.findings.length) return 'aucune';
+  const top=[...s.findings].sort((a,b)=>b.sev-a.sev).slice(0,3);
+  return top.map(f=>f.name+(f.line?` (ligne ${f.line})`:'')).join(' ; ');
+}
+
+async function vtQuery(id){
+  const f=state.files.find(x=>x.id===id);
+  if(!f) return;
+  const out=document.getElementById('vtResult');
+  if(!state.vtKey){ out.innerHTML='<div class="warnbox">Clé API manquante.</div>'; return; }
+  out.innerHTML='<div class="infobox"><span class="spinner"></span>Interrogation…</div>';
+  try{
+    const resp=await fetch('https://www.virustotal.com/api/v3/files/'+f.hash,{headers:{'x-apikey':state.vtKey}});
+    if(resp.status===404){ out.innerHTML='<div class="okbox">Hash inconnu de VirusTotal (fichier jamais soumis).</div>'; return; }
+    if(!resp.ok){ out.innerHTML='<div class="dangerbox">Erreur API: '+resp.status+' '+resp.statusText+'</div>'; return; }
+    const j=await resp.json();
+    const stats=j.data?.attributes?.last_analysis_stats||{};
+    const mal=stats.malicious||0, sus=stats.suspicious||0, total=Object.values(stats).reduce((a,b)=>a+b,0);
+    out.innerHTML=`<div class="${mal>0?'dangerbox':'okbox'}">
+      <b>Résultat VirusTotal :</b> ${mal} malveillant(s), ${sus} suspect(s) sur ${total} moteurs.<br>
+      ${mal>0?'⚠️ Fichier détecté comme malveillant.':'✅ Aucun moteur ne le détecte comme malveillant.'}
+    </div>`;
+  }catch(e){
+    out.innerHTML='<div class="dangerbox">Échec (CORS ou réseau) : '+esc(e.message)+'. Utilisez le lien manuel.</div>';
+  }
+}
+
+// ---------- restore ----------
+function requestRestore(id){
+  const f=state.files.find(x=>x.id===id);
+  if(!f) return;
+  if(f.encrypted && !state.password){
+    state.pendingUnlockAction=()=>requestRestore(id);
+    openUnlock();
+    return;
+  }
+  state.pendingRestore=id;
+  document.getElementById('restoreName').textContent=f.name;
+  document.getElementById('restoreModal').style.display='grid';
+}
+async function doRestore(){
+  const id=state.pendingRestore; state.pendingRestore=null;
+  document.getElementById('restoreModal').style.display='none';
+  const f=state.files.find(x=>x.id===id);
+  if(!f) return;
+  try{
+    let buf=f.data;
+    if(f.encrypted){ buf=await decryptBuffer(state.password,f); }
+    const blob=new Blob([buf],{type:f.type||'application/octet-stream'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download=f.name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    toast('Fichier restauré (téléchargé)','ok');
+  }catch(err){ console.error(err); toast('Échec restauration','err'); }
+}
+
+// ---------- delete ----------
+async function deleteOne(id){
+  if(!confirm('Supprimer ce fichier du coffre ?')) return;
+  try{ await deleteFile(id); state.files=state.files.filter(f=>f.id!==id); render(); toast('Supprimé','ok'); }
+  catch(e){ toast('Erreur suppression','err'); }
+}
+
+// ---------- details ----------
+function openDetail(id){
+  const f=state.files.find(x=>x.id===id);
+  if(!f) return;
+  const kv=document.getElementById('detailKv');
+  const magic=f.scan?f.scan.magic:detectMagic(f.data&&f.data.buffer?f.data.buffer:f.data).name;
+  kv.innerHTML=`
+    <dt>Nom</dt><dd>${esc(f.name)}</dd>
+    <dt>Taille</dt><dd>${fmtSize(f.size)}</dd>
+    <dt>Type MIME</dt><dd>${esc(f.type)}</dd>
+    <dt>Contenu détecté</dt><dd>${esc(magic)}</dd>
+    <dt>Risque</dt><dd>${riskLabel(f.risk)}</dd>
+    <dt>SHA-256</dt><dd>${f.hash}</dd>
+    <dt>Chiffré</dt><dd>${f.encrypted?'Oui (AES-GCM)':'Non'}</dd>
+    <dt>Menace</dt><dd>${f.scan?threatLevel(f.scan.score).label+' ('+f.scan.score+'/100)':'non analysé'}</dd>
+    <dt>Ajouté</dt><dd>${fmtDate(f.addedAt)}</dd>
+    <dt>Modifié (orig.)</dt><dd>${fmtDate(f.lastModified)}</dd>
+    <dt>ID</dt><dd>${f.id}</dd>
+  `;
+  document.getElementById('detailModal').style.display='grid';
+}
+
+// ---------- unlock ----------
+function openUnlock(){ document.getElementById('unlockModal').style.display='grid'; document.getElementById('unlockPass').value=''; document.getElementById('unlockErr').style.display='none'; setTimeout(()=>document.getElementById('unlockPass').focus(),50); }
+async function doUnlock(){
+  const pass=document.getElementById('unlockPass').value;
+  const err=document.getElementById('unlockErr');
+  err.style.display='none';
+  if(!pass){ err.textContent='Mot de passe requis'; err.style.display='block'; return; }
+  const ok=await verifyPassword(pass);
+  if(!ok){ err.textContent='Mot de passe incorrect'; err.style.display='block'; return; }
+  state.password=pass;
+  document.getElementById('unlockModal').style.display='none';
+  toast('Coffre déverrouillé','ok');
+  render();
+  if(state.pendingUnlockAction){ const a=state.pendingUnlockAction; state.pendingUnlockAction=null; a(); }
+}
+
+// ---------- protect ----------
+function openProtect(){
+  const hasEnc=state.files.some(f=>f.encrypted);
+  const info=document.getElementById('protectInfo');
+  const rowOld=document.getElementById('rowOldPass');
+  if(state.password){
+    document.getElementById('protectTitle').textContent='Changer le mot de passe';
+    info.textContent='Tous les fichiers seront re-chiffrés avec le nouveau mot de passe.';
+    rowOld.style.display='block';
+  } else if(hasEnc){
+    document.getElementById('protectTitle').textContent='Définir / changer le mot de passe';
+    info.textContent='Des fichiers chiffrés existent. Saisissez l\'ancien mot de passe.';
+    rowOld.style.display='block';
+  } else {
+    document.getElementById('protectTitle').textContent='Protéger le coffre';
+    info.textContent='Les nouveaux fichiers seront chiffrés (AES-GCM). Les fichiers existants non chiffrés seront aussi chiffrés.';
+    rowOld.style.display='none';
+  }
+  document.getElementById('newPass').value='';
+  document.getElementById('newPass2').value='';
+  document.getElementById('oldPass').value='';
+  document.getElementById('protectErr').style.display='none';
+  document.getElementById('protectModal').style.display='grid';
+}
+async function doProtect(){
+  const err=document.getElementById('protectErr');
+  err.style.display='none';
+  const newPass=document.getElementById('newPass').value;
+  const newPass2=document.getElementById('newPass2').value;
+  const oldPass=document.getElementById('oldPass').value;
+  if(newPass.length<4){ err.textContent='Mot de passe trop court (min 4)'; err.style.display='block'; return; }
+  if(newPass!==newPass2){ err.textContent='Les mots de passe ne correspondent pas'; err.style.display='block'; return; }
+
+  let currentPass=state.password;
+  const hasEnc=state.files.some(f=>f.encrypted);
+  if(hasEnc && !currentPass){
+    const ok=await verifyPassword(oldPass);
+    if(!ok){ err.textContent='Ancien mot de passe incorrect'; err.style.display='block'; return; }
+    currentPass=oldPass;
+  }
+  if(hasEnc && currentPass && oldPass && oldPass!==currentPass){
+    const ok=await verifyPassword(oldPass);
+    if(!ok){ err.textContent='Ancien mot de passe incorrect'; err.style.display='block'; return; }
+    currentPass=oldPass;
+  }
+
+  try{
+    showProgress('Chiffrement en cours…');
+    for(const f of state.files){
+      let plainBuf;
+      if(f.encrypted){
+        if(!currentPass){ err.textContent='Mot de passe actuel requis'; err.style.display='block'; clearProgress(); return; }
+        plainBuf=await decryptBuffer(currentPass,f);
+      } else {
+        plainBuf=f.data;
+      }
+      const e=await encryptBuffer(newPass,plainBuf);
+      f.encrypted=true; f.salt=e.salt; f.iv=e.iv; f.data=e.data;
+      await putFile(f);
+    }
+    await createCanary(newPass);
+    state.password=newPass;
+    clearProgress();
+    document.getElementById('protectModal').style.display='none';
+    toast('Coffre protégé','ok');
+    render();
+  }catch(e){ console.error(e); clearProgress(); err.textContent='Erreur: '+e.message; err.style.display='block'; }
+}
+
+// ---------- unprotect ----------
+async function unprotect(){
+  if(!state.password){ toast('Coffre déjà non protégé','err'); return; }
+  if(!confirm('Retirer la protection ? Tous les fichiers seront déchiffrés.')) return;
+  try{
+    showProgress('Déchiffrement…');
+    for(const f of state.files){
+      if(f.encrypted){
+        const buf=await decryptBuffer(state.password,f);
+        f.encrypted=false; f.data=buf; delete f.salt; delete f.iv;
+        await putFile(f);
+      }
+    }
+    await deleteMeta('canary');
+    state.password=null;
+    clearProgress();
+    toast('Protection retirée','ok');
+    render();
+  }catch(e){ console.error(e); clearProgress(); toast('Erreur','err'); }
+}
+
+// ---------- export ----------
+async function exportVault(){
+  showProgress('Export…');
+  const out=[];
+  for(const f of state.files){
+    const rec={
+      id:f.id,name:f.name,size:f.size,type:f.type,lastModified:f.lastModified,addedAt:f.addedAt,hash:f.hash,risk:f.risk,quarantined:f.quarantined,encrypted:f.encrypted,notes:f.notes||'',scan:f.scan||null,
+      data:bufToBase64(f.data)
+    };
+    if(f.encrypted){ rec.salt=u8ToBase64(f.salt); rec.iv=u8ToBase64(f.iv); }
+    out.push(rec);
+  }
+  const blob=new Blob([JSON.stringify({version:1,exportedAt:Date.now(),files:out})],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download='coffre-malware-'+new Date().toISOString().slice(0,10)+'.vault.json'; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  clearProgress();
+  toast('Export terminé','ok');
+}
+
+// ---------- import ----------
+async function importVault(file){
+  try{
+    const text=await file.text();
+    const obj=JSON.parse(text);
+    if(!obj.files || !Array.isArray(obj.files)) throw new Error('Format invalide');
+    let added=0;
+    showProgress('Import…');
+    for(let i=0;i<obj.files.length;i++){
+      const r=obj.files[i];
+      showProgress(`Import ${i+1}/${obj.files.length}`);
+      const exists=state.files.some(f=>f.id===r.id || f.hash===r.hash);
+      if(exists) continue;
+      const rec={
+        id:r.id||uid(),name:r.name,size:r.size,type:r.type,lastModified:r.lastModified,addedAt:r.addedAt||Date.now(),hash:r.hash,risk:r.risk||riskOf(r.name),quarantined:true,encrypted:!!r.encrypted,notes:r.notes||'',scan:r.scan||null
+      };
+      rec.data=base64ToBuf(r.data);
+      if(rec.encrypted){ rec.salt=base64ToU8(r.salt); rec.iv=base64ToU8(r.iv); }
+      await putFile(rec);
+      state.files.push(rec);
+      added++;
+    }
+    clearProgress();
+    render();
+    toast(added+' fichier(s) importé(s)','ok');
+  }catch(e){ console.error(e); clearProgress(); toast('Échec import: '+e.message,'err'); }
+}
+
+// ---------- clear ----------
+async function clearAll(){
+  if(!confirm('Vider tout le coffre ? Irréversible.')) return;
+  try{ await clearFiles(); state.files=[]; await deleteMeta('canary'); state.password=null; render(); toast('Coffre vidé','ok'); }
+  catch(e){ toast('Erreur','err'); }
+}
+
+// ---------- settings ----------
+function openSettings(){
+  document.getElementById('vtKey').value=state.vtKey||'';
+  document.getElementById('threshold').value=state.threshold;
+  document.getElementById('settingsModal').style.display='grid';
+}
+
+// ---------- wiring ----------
+document.getElementById('dropzone').addEventListener('click',()=>document.getElementById('fileInput').click());
+const dz=document.getElementById('dropzone');
+dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag');});
+dz.addEventListener('dragleave',()=>dz.classList.remove('drag'));
+dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('drag'); addFiles(e.dataTransfer.files);});
+document.getElementById('fileInput').addEventListener('change',e=>{addFiles(e.target.files); e.target.value='';});
+
+document.getElementById('search').addEventListener('input',renderStorage);
+document.getElementById('filterRisk').addEventListener('change',renderStorage);
+document.getElementById('sortBy').addEventListener('change',renderStorage);
+document.getElementById('searchScan').addEventListener('input',renderScan);
+document.getElementById('filterThreat').addEventListener('change',renderScan);
+document.getElementById('sortByScan').addEventListener('change',renderScan);
+
+document.getElementById('btnExport').addEventListener('click',exportVault);
+document.getElementById('btnImport').addEventListener('click',()=>document.getElementById('importInput').click());
+document.getElementById('importInput').addEventListener('change',e=>{ if(e.target.files[0]) importVault(e.target.files[0]); e.target.value='';});
+document.getElementById('btnClear').addEventListener('click',clearAll);
+document.getElementById('btnScanAll').addEventListener('click',analyzeAll);
+document.getElementById('btnSettings').addEventListener('click',openSettings);
+
+// main tabs
+document.querySelectorAll('.maintab').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('.maintab').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+    document.getElementById('view'+btn.dataset.view.charAt(0).toUpperCase()+btn.dataset.view.slice(1)).classList.add('active');
+  });
+});
+
+document.getElementById('btnLock').addEventListener('click',()=>{ state.password=null; toast('Verrouillé','ok'); render(); });
+document.getElementById('btnProtect').addEventListener('click',()=>{
+  if(state.password){
+    const choice=confirm('Mot de passe déjà défini.\nOK = changer le mot de passe\nAnnuler = retirer la protection');
+    if(choice) openProtect(); else unprotect();
+  } else {
+    openProtect();
+  }
+});
+
+// unlock modal
+document.getElementById('unlockOk').addEventListener('click',doUnlock);
+document.getElementById('unlockCancel').addEventListener('click',()=>{ document.getElementById('unlockModal').style.display='none'; state.pendingUnlockAction=null; });
+document.getElementById('unlockPass').addEventListener('keydown',e=>{ if(e.key==='Enter') doUnlock(); });
+
+// protect modal
+document.getElementById('protectOk').addEventListener('click',doProtect);
+document.getElementById('protectCancel').addEventListener('click',()=>document.getElementById('protectModal').style.display='none');
+
+// detail modal
+document.getElementById('detailClose').addEventListener('click',()=>document.getElementById('detailModal').style.display='none');
+
+// restore modal
+document.getElementById('restoreOk').addEventListener('click',doRestore);
+document.getElementById('restoreCancel').addEventListener('click',()=>{ document.getElementById('restoreModal').style.display='none'; state.pendingRestore=null; });
+
+// scan modal
+document.getElementById('scanClose').addEventListener('click',()=>document.getElementById('scanModal').style.display='none');
+
+// settings modal
+document.getElementById('settingsSave').addEventListener('click',()=>{
+  state.vtKey=document.getElementById('vtKey').value.trim();
+  state.threshold=parseInt(document.getElementById('threshold').value)||40;
+  localStorage.setItem('vtKey',state.vtKey);
+  localStorage.setItem('threshold',String(state.threshold));
+  document.getElementById('settingsModal').style.display='none';
+  toast('Paramètres enregistrés','ok');
+  updateStats();
+  render();
+});
+document.getElementById('settingsCancel').addEventListener('click',()=>document.getElementById('settingsModal').style.display='none');
+
+// ---------- init ----------
+(async function init(){
+  try{
+    await openDB();
+    state.files=await getAllFiles();
+    const c=await getMeta('canary');
+    const hasEnc=state.files.some(f=>f.encrypted);
+    if(c || hasEnc){
+      state.password=null;
+      if(hasEnc) openUnlock();
+    }
+    render();
+  }catch(e){ console.error(e); toast('Erreur d\'initialisation: '+e.message,'err'); }
+})();
+</script>
+</body>
+</html>
